@@ -18,7 +18,7 @@ from scipy import sparse
 
 
 def sigm(x):
-    return np.exp(-1.*x) / (-np.expm1(-1.*x))
+    return np.exp((-1)*x) / (1 - np.exp((-1)*x))
 
 
 def conductance(adj_csr):
@@ -85,19 +85,15 @@ def gradient(F, A, i):
     https://cs.stanford.edu/people/jure/pubs/bigclam-wsdm13.pdf
     
       * i indicates the row under consideration
-    
-    The many forloops in this function can be optimized, but for
-    educational purposes we write them out clearly
     """
     N, C = F.shape
 
-    print(F.toarray())
     neighbours = A[i].indices
 
     sum_neigh = np.zeros(C)
     for nb in neighbours:
         dotproduct = F[i].dot(F[nb].transpose())
-        sum_neigh += F[nb]*sigm(dotproduct.data[0])
+        sum_neigh += F[nb]*sigm(dotproduct[0, 0])
 
     sum_nneigh = np.sum(F, axis=0) - F[i] - np.sum(F[A[i].indices], axis=0)
     grad = sum_neigh - sum_nneigh
@@ -105,15 +101,17 @@ def gradient(F, A, i):
 
 
 
-def train(A, C, iterations=1000):
+def train(A, C, iterations=10):
     # initialize an F
     # print(A.ndim)
     N = A.shape[0]
     cond = conductance(A)
-    F = F_init(cond, C)
+    # F = F_init(cond, C)
+    F = sparse.csr_matrix(np.random.rand(N,C))
     for n in range(iterations):
         for person in range(N):
             grad = gradient(F, A, person)
+            # print(grad)
 
             F[person] += 0.005*grad
 
@@ -127,29 +125,15 @@ def train(A, C, iterations=1000):
 
 
 if __name__ == "__main__":
-    # adj = np.load('data/adj.npy')
-    # p2c = pickle.load(open('data/p2c.pl', 'rb'))
-    # generate data
-    # datagen = Datagen(40, [.3, .3, .2, .2],[.2, .3, .3, .2] , .1).gen_assignments().gen_adjacency()
-    # p2c = datagen.person2comm
-    # adj = datagen.adj
+    adj = np.load('data/adj.npy')
+    p2c = pickle.load(open('data/p2c.pl', 'rb'))
     amazon = nx.read_edgelist("../communities/email-Eu-core.txt")
     adj = nx.adjacency_matrix(amazon)
+    print(adj[1:10].toarray())
     adj_csr = sparse.csr_matrix(adj)
     # print(adj)
 
     print("Training")
-    F = train(adj_csr, 10)
-    print("Argmaxing")
-    F_argmax = np.argmax(F, 1)
-    print("JSONing")
-    # data = gen_json(adj, p2c, F_argmax)
-
-    print("Saving")
-    # with open('../data/data.json', 'w') as f:
-    # with open('ui/assets/data.json', 'w') as f:
-    #     json.dump(data, f, indent=4)
-
+    F = train(adj_csr, 4)
     for i, row in enumerate(F):
         print(row)
-        # print(p2c[i])
