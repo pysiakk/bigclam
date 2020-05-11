@@ -10,32 +10,74 @@ Throughout the code, we will use tho following variables
 """
 
 import numpy as np
-import scipy
 import pickle
 from util.generate_data import Datagen, gen_json
 import json
 import networkx as nx
-import scipy as sp
+from scipy import sparse
 
 
 def sigm(x):
-    return np.divide(np.exp(-1.*x), 1.-np.exp(-1.*x))
+    return np.exp(-1.*x) / (-np.expm1(-1.*x))
 
 
-def log_likelihood(F, A):
-    """implements equation 2 of 
-    https://cs.stanford.edu/people/jure/pubs/bigclam-wsdm13.pdf"""
-    A_soft = F.dot(F.T)
+def conductance(adj_csr):
+    cond = []
+    for i, row in enumerate(adj_csr):
+        degrees = 0
+        outside = 0
+        for j, num in enumerate(row.indices):
+            degrees += len(adj_csr[num].indices)
+            outside += len(set(adj_csr[num].indices) - set(row.indices))
+        if degrees != 0:
+            cond.append(outside/degrees)
+        else:
+            cond.append(1)
 
-    # Next two lines are multiplied with the adjacency matrix, A
-    # A is a {0,1} matrix, so we zero out all elements not contributing to the sum
-    FIRST_PART = A*np.log(1.-np.exp(-1.*A_soft))
-    sum_edges = np.sum(FIRST_PART)
-    SECOND_PART = (1-A)*A_soft
-    sum_nedges = np.sum(SECOND_PART)
+    minimas = []
+    for i, row in enumerate(adj_csr):
+        if len(row.indices) == 0:
+            continue
+        tmp = min(np.array(cond)[row.indices])
+        if cond[i] < tmp:
+            minimas.append(i)
 
-    log_likeli = sum_edges - sum_nedges
-    return log_likeli
+    A = np.zeros((adj_csr.shape[0], len(minimas) + 1))
+    for i, mini in enumerate(minimas):
+        A[adj_csr[mini].indices, i+1] = 1
+    A[:, 0] = 1
+
+    return np.array(A)
+
+
+def F_init(cond, K):
+    if cond.shape[1] >= K:
+        return cond[:,0:K]
+    else:
+        return sparse.csr_matrix(np.hstack((cond, np.zeros((cond.shape[0], K - cond.shape[1])))))
+
+
+# def log_likelihood(F, A):
+#     # """implements equation 2 of
+#     # https://cs.stanford.edu/people/jure/pubs/bigclam-wsdm13.pdf"""
+#     # A_soft = F.dot(F.T)
+#     #
+#     # # Next two lines are multiplied with the adjacency matrix, A
+#     # # A is a {0,1} matrix, so we zero out all elements not contributing to the sum
+#     # print(A_soft)
+#     # FIRST_PART = A*np.log(-np.expm1(-1.*A_soft))
+#     # sum_edges = np.sum(FIRST_PART)
+#     # sum_nedges = np.sum(A_soft) - A
+#     #
+#     # log_likeli = sum_edges - sum_nedges
+#     # return log_likeli
+#
+#     for i in range(F.shape[0]):
+#         FIRST_PART = []
+#         for neigh in  A[i].indices:
+#             print(np.expm1(-F[i] @ F[neigh].transpose()))
+#             FIRST_PART.append(np.log(- np.expm1(-F[i] @ F[neigh].transpose())))
+#     print(FIRST_PART)
 
 
 def gradient(F, A, i):
@@ -49,53 +91,38 @@ def gradient(F, A, i):
     """
     N, C = F.shape
 
-    # print(A == 1)
-    # print(A)
-    #
-    # neighbours = np.where(A == 1)
-    # nneighbours = sp.where(A == 0)
-    #
-    # print(neighbours)
-    #
-    # sum_neigh = np.zeros((C,))
-    # for nb in neighbours[0]:
-    #     dotproduct = F[nb].dot(F[i])
-    #     sum_neigh += F[nb]*sigm(dotproduct)
-    #
-    # sum_nneigh = np.zeros((C,))
-    # # Speed up this computation using eq.4
-    # for nnb in nneighbours[0]:
-    #     sum_nneigh += F[nnb]
-    #
-    # grad = sum_neigh - sum_nneigh
-    # return grad
+    neighbours = A[i].indices
 
     sum_neigh = np.zeros((C,))
-    sum_nneigh = np.zeros((C,))
-    for n in range(N):
-        dotproduct = F[n].dot(F[i])
-        sum_neigh += F[n] * sigm(dotproduct)
-        sum_nneigh += F[n]
+    for nb in neighbours:
+        dotproduct = F[i].dot(F[nb].transpose())
+        sum_neigh += F[nb]*sigm(dotproduct.data[0])
+
+    sum_nneigh = np.sum(F, axis=0) - F[i] - np.sum(F[A[i].indices], axis=0)
     grad = sum_neigh - sum_nneigh
     return grad
 
 
 
-def train(A, C, iterations=10000):
+def train(A, C, iterations=1000):
     # initialize an F
     # print(A.ndim)
     N = A.shape[0]
-    F = np.random.rand(N, C)
-
+    cond = conductance(A)
+    F = F_init(cond, C)
+    print(F)
     for n in range(iterations):
         for person in range(N):
             grad = gradient(F, A, person)
 
             F[person] += 0.005*grad
-
-            F[person] = np.maximum(0.001, F[person])    # F should be nonnegative
-        ll = log_likelihood(F, A)
-        print('At step %5i/%5i ll is %5.3f'%(n, iterations, ll))
+            # print(F[person])
+            for i, ind in enumerate(F[person].indices):
+                if F[person, ind] < 0.001:
+                    F[person, ind] = 0  # F should be nonnegative
+        # ll = log_likelihood(F, A)
+        # print('At step %5i/%5i ll is %5.3f'%(n, iterations, ll))
+        print(n)
     return F
 
 
@@ -106,15 +133,19 @@ if __name__ == "__main__":
     # datagen = Datagen(40, [.3, .3, .2, .2],[.2, .3, .3, .2] , .1).gen_assignments().gen_adjacency()
     # p2c = datagen.person2comm
     # adj = datagen.adj
-    # amazon = nx.read_edgelist("/home/pysiakk/Desktop/communities/com-amazon.ungraph.txt")
+    # amazon = nx.read_edgelist("../communities/com-amazon.ungraph.txt")
     # adj = nx.adjacency_matrix(amazon)
-    adj_csr = sp.sparse.csr_matrix(adj)
-    print(p2c)
+    adj_csr = sparse.csr_matrix(adj)
+    # print(adj)
 
-    F = train(adj_csr, 4)
+    print("Training")
+    F = train(adj_csr, 6)
+    print("Argmaxing")
     F_argmax = np.argmax(F, 1)
+    print("JSONing")
     data = gen_json(adj, p2c, F_argmax)
 
+    print("Saving")
     # with open('../data/data.json', 'w') as f:
     with open('ui/assets/data.json', 'w') as f:
         json.dump(data, f, indent=4)
@@ -122,4 +153,3 @@ if __name__ == "__main__":
     for i, row in enumerate(F):
         print(row)
         print(p2c[i])
-
