@@ -91,9 +91,10 @@ def gradient(F, A, i):
     """
     N, C = F.shape
 
+    print(F.toarray())
     neighbours = A[i].indices
 
-    sum_neigh = np.zeros((C,))
+    sum_neigh = np.zeros(C)
     for nb in neighbours:
         dotproduct = F[i].dot(F[nb].transpose())
         sum_neigh += F[nb]*sigm(dotproduct.data[0])
@@ -110,15 +111,14 @@ def train(A, C, iterations=1000):
     N = A.shape[0]
     cond = conductance(A)
     F = F_init(cond, C)
-    print(F)
     for n in range(iterations):
         for person in range(N):
             grad = gradient(F, A, person)
 
             F[person] += 0.005*grad
-            # print(F[person])
+
             for i, ind in enumerate(F[person].indices):
-                if F[person, ind] < 0.001:
+                if F[person, ind] < 0:
                     F[person, ind] = 0  # F should be nonnegative
         # ll = log_likelihood(F, A)
         # print('At step %5i/%5i ll is %5.3f'%(n, iterations, ll))
@@ -127,29 +127,29 @@ def train(A, C, iterations=1000):
 
 
 if __name__ == "__main__":
-    adj = np.load('data/adj.npy')
-    p2c = pickle.load(open('data/p2c.pl', 'rb'))
+    # adj = np.load('data/adj.npy')
+    # p2c = pickle.load(open('data/p2c.pl', 'rb'))
     # generate data
     # datagen = Datagen(40, [.3, .3, .2, .2],[.2, .3, .3, .2] , .1).gen_assignments().gen_adjacency()
     # p2c = datagen.person2comm
     # adj = datagen.adj
-    # amazon = nx.read_edgelist("../communities/com-amazon.ungraph.txt")
-    # adj = nx.adjacency_matrix(amazon)
+    amazon = nx.read_edgelist("../communities/email-Eu-core.txt")
+    adj = nx.adjacency_matrix(amazon)
     adj_csr = sparse.csr_matrix(adj)
     # print(adj)
 
     print("Training")
-    F = train(adj_csr, 6)
+    F = train(adj_csr, 10)
     print("Argmaxing")
     F_argmax = np.argmax(F, 1)
     print("JSONing")
-    data = gen_json(adj, p2c, F_argmax)
+    # data = gen_json(adj, p2c, F_argmax)
 
     print("Saving")
     # with open('../data/data.json', 'w') as f:
-    with open('ui/assets/data.json', 'w') as f:
-        json.dump(data, f, indent=4)
+    # with open('ui/assets/data.json', 'w') as f:
+    #     json.dump(data, f, indent=4)
 
     for i, row in enumerate(F):
         print(row)
-        print(p2c[i])
+        # print(p2c[i])
