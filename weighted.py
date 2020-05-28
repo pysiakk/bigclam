@@ -20,11 +20,10 @@ import scipy
 
 
 def sigm(x):
-    return np.exp((-1)*x) / (1 - np.exp((-1)*x))
+    return np.exp((-1) * x) / (1 - np.exp((-1) * x))
 
 
 def conductance(adj_csr):
-    # print(adj_csr)
     cond = []
     for i, row in enumerate(adj_csr):
         degrees = 0
@@ -33,13 +32,12 @@ def conductance(adj_csr):
             degrees += len(adj_csr[num].indices)
             outside += len(set(adj_csr[num].indices) - set(row.indices))
         if degrees != 0:
-            cond.append(outside/degrees)
+            cond.append(outside / degrees)
         else:
             cond.append(1)
 
     minimas = []
     for i, row in enumerate(adj_csr):
-        # print(len(row.indices))
         if len(row.indices) == 0:
             continue
         tmp = min(np.array(cond)[row.indices])
@@ -48,63 +46,48 @@ def conductance(adj_csr):
 
     A = np.zeros((adj_csr.shape[0], len(minimas) + 1))
     for i, mini in enumerate(minimas):
-        A[adj_csr[mini].indices, i+1] = 1
+        A[adj_csr[mini].indices, i + 1] = 1
     A[:, 0] = 1
 
     return np.array(A)
 
 
-# def F_init(cond, K):
+def F_init(cond, K):
+    if cond.shape[1] >= K:
+        return cond[:, 0:K]
+    else:
+        return sparse.csr_matrix(np.hstack((cond, np.zeros((cond.shape[0], K - cond.shape[1])))))
 
-    # if cond.shape[1] >= K:
-    #     return cond[:,0:K]
-    # else:
-    #     return sparse.csr_matrix(np.hstack((cond, np.zeros((cond.shape[0], K - cond.shape[1])))))
 
-
-def log_likelihood(F, A):
-
-    neighbours = sparse.find(A >= 1)
-    nneighbours = sparse.find(A == 0)
-
-    neigh_sum = 0
-    for i in range(neighbours[0].shape[0]):
-        if neighbours[0][i] > neighbours[1][i]:
-            neigh_sum += np.log(1 - np.exp(-np.dot(F[neighbours[0][i]], F[neighbours[1][i]].transpose())[0, 0]))
-
-    nneigh_sum = 0
-    for i in range(nneighbours[0].shape[0]):
-        if nneighbours[0][i] > nneighbours[1][i]:
-            nneigh_sum += np.dot(F[nneighbours[0][i]], F[nneighbours[1][i]].transpose())[0, 0]
-
-    return neigh_sum - nneigh_sum
+# def log_likelihood(F, A):
+#
+#     dotproduct =
 
 
 def gradient(F, A, i):
     """Implements equation 3 of
     https://cs.stanford.edu/people/jure/pubs/bigclam-wsdm13.pdf
-    
+
       * i indicates the row under consideration
     """
     N, C = F.shape
 
-    neighbours = A[i].indices
     sum_neigh = np.zeros(C)
-    for nb in neighbours:
-        dotproduct = F[i].dot(F[nb].transpose())
-        sum_neigh += F[nb]*sigm(dotproduct[0, 0])
+    for nb in range(A.shape[1]):
+        # tmp = np.zeros(len(F[nb]))
+        if A[i, nb] == 0:
+            sum_neigh -= F[nb]
+        else:
+            sum_neigh += A[i, nb] * F[nb] / (np.dot(F[i], F[nb].transpose())[0, 0]) - F[nb]
 
-    sum_nneigh = np.sum(F, axis=0) - F[i] - np.sum(F[A[i].indices], axis=0)
-
-    grad = sum_neigh - sum_nneigh
+    grad = sum_neigh
     return grad
 
 
-
-def train(A, C, iterations=20):
+def train(A, C, iterations=10):
     N = A.shape[0]
-    # cond = conductance(A)
-    # print(cond)
+    cond = conductance(A)
+    # F = F_init(cond, C)
     F = sparse.csr_matrix(np.random.rand(N, C))
     for n in range(iterations):
         diff = np.ones(N)
@@ -112,7 +95,7 @@ def train(A, C, iterations=20):
             grad = gradient(F, A, person)
             # print(grad)
 
-            F[person] += 0.000001*grad
+            F[person] += 0.00001 * grad
 
             for i, ind in enumerate(F[person].indices):
                 if F[person, ind] < 0:
@@ -126,18 +109,16 @@ def train(A, C, iterations=20):
 if __name__ == "__main__":
     adj = np.load('data/adj.npy')
     p2c = pickle.load(open('data/p2c.pl', 'rb'))
-    amazon = nx.read_edgelist("../communities/network.dat")
-    # amazon = nx.read_edgelist("../communities/email-Eu-core.txt")
-    # edges = pd.read_csv("../communities/soc-sign-bitcoinotc.csv", delimiter=",", header=None).iloc[:, 0:3]
+    amazon = nx.read_edgelist("../communities/email-Eu-core.txt")
+    edges = pd.read_csv("../communities/soc-sign-bitcoinotc.csv", delimiter=",", header=None).iloc[:, 0:3]
     # print(edges.head)
-    # edges.iloc[:,2] = edges.iloc[:,2] + 11
-    # amazon = nx.from_pandas_edgelist(edges, source=0, target=1, edge_attr=2)
-    adj = nx.adjacency_matrix(amazon)
+    edges.iloc[:,2] = edges.iloc[:,2] + 11
+    amazon = nx.from_pandas_edgelist(edges, source=0, target=1, edge_attr=2)
+    # adj = nx.adjacency_matrix(amazon)
     adj_csr = sparse.csr_matrix(adj)
     E = len(sparse.find(adj_csr >= 1)[0])//2
     V = adj_csr.shape[0]
-    eps = 16 * E / V / (V-1)
-    print(eps)
+    eps = 2 * E / V / (V-1)
 
     for i in range(10, 11):
         print("Training")
@@ -147,10 +128,9 @@ if __name__ == "__main__":
         com = [[] for _ in range(max(Z[1]))]
         print("****************************")
         for i in range(max(Z[1])):
-            for j in np.where(Z[1]==i)[0]:
+            for j in np.where(Z[1] == i)[0]:
                 com[i].append(Z[0][j])
         print(com)
-
-        # for i, row in enumerate(F):
-        #     print(row.toarray())
+        for i, row in enumerate(F):
+            print(row.toarray())
         # print(log_likelihood(F, adj_csr))
